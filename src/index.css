@@ -6,3 +6,6 @@
 body {
   @apply bg-slate-50 text-slate-900;
 }
+.font-sans { font-family: 'Inter', system-ui, sans-serif; }
+.font-serif { font-family: 'Georgia', serif; }
+.font-mono { font-family: 'ui-monospace', monospace; }
