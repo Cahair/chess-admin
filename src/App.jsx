@@ -5,7 +5,7 @@ import { ThemeSupa } from '@supabase/auth-ui-shared'
 import { GoogleGenerativeAI } from "@google/generative-ai"
 import { 
   Users, LogOut, Search, Trophy, Settings, 
-  Star, Euro, Calendar as CalendarIcon 
+  Star, Euro, Calendar as CalendarIcon, ShieldCheck 
 } from 'lucide-react'
 
 // Import de tes onglets
@@ -13,6 +13,7 @@ import FinanceTab from './FinanceTab'
 import MembersTab from './MembersTab'
 import SettingsTab from './SettingsTab'
 import CalendarTab from './CalendarTab'
+import DocumentsTab from './DocumentsTab' // Import du nouvel onglet
 
 const genAI = new GoogleGenerativeAI("AIzaSyAuPeXom6MXGE_n0W1cRsv7A7FICR9LZVw");
 
@@ -164,6 +165,12 @@ Réponds uniquement en JSON sous cette forme :
             <CalendarIcon size={20} /> Calendrier
           </button>
 
+          {/* NOUVEL ONGLET COFFRE-FORT */}
+          <button onClick={() => setActiveTab('documents')} 
+            className={`flex items-center gap-3 px-5 py-4 rounded-2xl w-full transition-all border ${activeTab === 'documents' ? 'bg-slate-800 text-white border-slate-700 shadow-inner' : 'border-transparent hover:text-white hover:bg-slate-800/50'}`}>
+            <ShieldCheck size={20} /> Coffre-fort
+          </button>
+
           <button onClick={() => setActiveTab('parametres')} 
             className={`flex items-center gap-3 px-5 py-4 rounded-2xl w-full transition-all border ${activeTab === 'parametres' ? 'bg-slate-800 text-white border-slate-700 shadow-inner' : 'border-transparent hover:text-white hover:bg-slate-800/50'}`}>
             <Settings size={20} /> Paramètres
@@ -184,7 +191,8 @@ Réponds uniquement en JSON sous cette forme :
             <h2 className="text-3xl md:text-4xl font-black tracking-tighter italic uppercase truncate" style={{ color: myClub.primary_color || '#1e293b' }}>
                 {activeTab === 'membres' ? myClub.name : 
                  activeTab === 'finance' ? "Trésorerie" : 
-                 activeTab === 'calendrier' ? "Calendrier" : "Paramètres"}
+                 activeTab === 'calendrier' ? "Calendrier" : 
+                 activeTab === 'documents' ? "Coffre-fort" : "Paramètres"}
             </h2>
           </div>
           {activeTab === 'membres' && (
@@ -214,6 +222,13 @@ Réponds uniquement en JSON sous cette forme :
               <FinanceTab myClub={myClub} supabase={supabase} dynamicRadius={dynamicRadius} updateClubTheme={updateClubTheme} />
             ) : activeTab === 'calendrier' ? (
               <CalendarTab myClub={myClub} supabase={supabase} dynamicRadius={dynamicRadius} />
+            ) : activeTab === 'documents' ? (
+              <DocumentsTab 
+    members={members} 
+    supabase={supabase} 
+    dynamicRadius={dynamicRadius} 
+    refreshData={fetchClubAndMembers} // <--- C'EST CETTE LIGNE QU'IL FAUT AJOUTER/VÉRIFIER
+  />
             ) : (
               <SettingsTab myClub={myClub} updateClubTheme={updateClubTheme} />
             )}
