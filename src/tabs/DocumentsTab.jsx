@@ -4,7 +4,10 @@ import {
   Download, Trash2, Search, CheckCircle2, Loader2, ChevronUp, ChevronDown 
 } from 'lucide-react'
 
-// --- UTILITAIRE DE COMPRESSION (En dehors du composant) ---
+// LA LIGNE CORRIGÉE EST ICI : On remonte d'un dossier pour trouver supabaseClient.js
+import { supabase as supabaseClient } from "../supabaseClient";
+
+// --- UTILITAIRE DE COMPRESSION ---
 const compressImage = (file) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -14,21 +17,17 @@ const compressImage = (file) => {
       img.src = event.target.result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1200; // Optimisation pour documents
+        const MAX_WIDTH = 1200;
         let width = img.width;
         let height = img.height;
-
         if (width > MAX_WIDTH) {
           height *= MAX_WIDTH / width;
           width = MAX_WIDTH;
         }
-
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        
-        // JPEG 70% pour un rapport poids/qualité idéal
         canvas.toBlob((blob) => {
           resolve(new File([blob], file.name, { type: 'image/jpeg' }));
         }, 'image/jpeg', 0.7);
@@ -41,6 +40,9 @@ export default function DocumentsTab({ members, supabase, dynamicRadius, refresh
   const [searchTerm, setSearchTerm] = useState('')
   const [processing, setProcessing] = useState(null)
   const [sortConfig, setSortConfig] = useState({ key: 'last_name', direction: 'asc' })
+
+  // Utilise le supabase passé en props ou le client importé
+  const client = supabase || supabaseClient;
 
   // --- LOGIQUE DE TRI ---
   const requestSort = (key) => {
@@ -66,7 +68,6 @@ export default function DocumentsTab({ members, supabase, dynamicRadius, refresh
     let file = e.target.files[0];
     if (!file) return;
 
-    // Blocage si fichier > 10 Mo
     if (file.size > 10 * 1024 * 1024) {
       alert("Le fichier est trop lourd (Max 10 Mo).");
       return;
@@ -76,7 +77,6 @@ export default function DocumentsTab({ members, supabase, dynamicRadius, refresh
     setProcessing(key);
 
     try {
-      // Compression si image pour éviter les lenteurs
       if (file.type.startsWith('image/')) {
         file = await compressImage(file);
       }
@@ -84,7 +84,7 @@ export default function DocumentsTab({ members, supabase, dynamicRadius, refresh
       const fileExt = file.name.split('.').pop();
       const fileName = `${memberId}/${docType}_${Date.now()}.${fileExt}`;
 
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await client.storage
         .from('member-documents')
         .upload(fileName, file, { upsert: true });
 
@@ -92,7 +92,7 @@ export default function DocumentsTab({ members, supabase, dynamicRadius, refresh
 
       const columnName = docType === 'certificat' ? 'doc_certificat' : 'doc_autorisation';
       
-      const { error: updateError } = await supabase
+      const { error: updateError } = await client
         .from('members')
         .update({ [columnName]: fileName })
         .eq('id', memberId);
@@ -114,9 +114,9 @@ export default function DocumentsTab({ members, supabase, dynamicRadius, refresh
     setProcessing(key);
 
     try {
-      await supabase.storage.from('member-documents').remove([filePath]);
+      await client.storage.from('member-documents').remove([filePath]);
       const columnName = docType === 'certificat' ? 'doc_certificat' : 'doc_autorisation';
-      await supabase.from('members').update({ [columnName]: null }).eq('id', memberId);
+      await client.from('members').update({ [columnName]: null }).eq('id', memberId);
       refreshData();
     } catch (error) {
       alert("Erreur de suppression : " + error.message);
@@ -126,7 +126,7 @@ export default function DocumentsTab({ members, supabase, dynamicRadius, refresh
   }
 
   async function downloadFile(path) {
-    const { data } = await supabase.storage.from('member-documents').getPublicUrl(path);
+    const { data } = await client.storage.from('member-documents').getPublicUrl(path);
     window.open(data.publicUrl, '_blank');
   }
 
@@ -240,10 +240,8 @@ export default function DocumentsTab({ members, supabase, dynamicRadius, refresh
   )
 }
 
-// --- SOUS-COMPOSANT DE CELLULE ---
 function DocActionCell({ loading, filePath, onUpload, onDelete, onDownload }) {
   if (loading) return <div className="flex justify-center"><Loader2 size={16} className="animate-spin text-indigo-500" /></div>;
-  
   if (filePath) {
     return (
       <div className="flex items-center justify-center gap-2 animate-in zoom-in duration-300">
@@ -254,7 +252,6 @@ function DocActionCell({ loading, filePath, onUpload, onDelete, onDownload }) {
       </div>
     );
   }
-
   return (
     <label className="flex flex-col items-center justify-center group cursor-pointer transition-all">
       <div className="p-2 bg-slate-50 text-slate-300 rounded-xl group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-all border border-dashed border-slate-200"><Upload size={14} /></div>

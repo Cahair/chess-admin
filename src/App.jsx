@@ -1,237 +1,230 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from './supabaseClient'
-import { Auth } from '@supabase/auth-ui-react'
-import { ThemeSupa } from '@supabase/auth-ui-shared'
-import { GoogleGenerativeAI } from "@google/generative-ai"
-import { 
-  Users, LogOut, Search, Trophy, Settings, 
-  Star, Euro, Calendar as CalendarIcon, ShieldCheck 
-} from 'lucide-react'
+import { Search, Trophy, LogOut } from 'lucide-react'
 
-// Import de tes onglets
-import FinanceTab from './FinanceTab'
-import MembersTab from './MembersTab'
-import SettingsTab from './SettingsTab'
-import CalendarTab from './CalendarTab'
-import DocumentsTab from './DocumentsTab' // Import du nouvel onglet
-
-const genAI = new GoogleGenerativeAI("AIzaSyAuPeXom6MXGE_n0W1cRsv7A7FICR9LZVw");
+// Imports de configuration et composants
+import { NAVIGATION_TABS } from './config/navigation'
+import Login from './components/Login'
+import DashboardTab from './tabs/DashboardTab' 
+import FinanceTab from './tabs/FinanceTab'
+import MembersTab from './tabs/MembersTab'
+import SettingsTab from './tabs/SettingsTab'
+import CalendarTab from './tabs/CalendarTab'
+import DocumentsTab from './tabs/DocumentsTab'
 
 export default function App() {
   const [session, setSession] = useState(null)
   const [myClub, setMyClub] = useState(null)
+  const [isNotAdmin, setIsNotAdmin] = useState(false)
   const [members, setMembers] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
-  const [newMember, setNewMember] = useState({ 
-    first_name: '', 
-    last_name: '', 
-    elo: '', 
-    license_status: 'en_attente',
-    category: 'Adulte',
-    license_number: ''
-  })
-  const [activeTab, setActiveTab] = useState('membres')
+  const [activeTab, setActiveTab] = useState('dashboard') 
+  const [memberFilter, setMemberFilter] = useState('tous') // État pour le filtrage automatique
   const [sortConfig, setSortConfig] = useState({ key: 'last_name', direction: 'asc' });
 
+  const [newMember, setNewMember] = useState({ 
+    first_name: '', last_name: '', elo: '', 
+    license_status: 'en_attente', category: 'Adulte', license_number: ''
+  })
+
+  // 1. Gestion de la session utilisateur
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session))
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (!session) setLoading(false);
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setSession(session);
+      if (!session) {
+        setLoading(false);
+        setMyClub(null);
+        setIsNotAdmin(false);
+      }
+    })
+
     return () => subscription.unsubscribe()
   }, [])
 
+  // 2. Chargement des données dès que la session est détectée
   useEffect(() => {
-    if (session) fetchClubAndMembers()
-    else setLoading(false)
+    if (session) {
+      fetchClubAndMembers();
+    }
   }, [session])
 
   async function fetchClubAndMembers() {
     try {
       setLoading(true);
-      const { data: clubData } = await supabase.from('clubs').select('*').eq('admin_id', session.user.id).maybeSingle(); 
-      if (!clubData) { setMyClub(null); return; }
+      const { data: clubData, error: clubError } = await supabase
+        .from('clubs')
+        .select('*')
+        .eq('admin_id', session.user.id)
+        .maybeSingle(); 
+
+      if (clubError) throw clubError;
+
+      if (!clubData) {
+        setIsNotAdmin(true); 
+        setLoading(false);
+        return;
+      }
+
       setMyClub(clubData);
-      const { data: membersData } = await supabase.from('members').select('*').eq('club_id', clubData.id);
+      setIsNotAdmin(false);
+
+      const { data: membersData } = await supabase
+        .from('members')
+        .select('*')
+        .eq('club_id', clubData.id);
+      
       setMembers(membersData || []);
-    } catch (error) { console.error(error); } finally { setLoading(false); }
+    } catch (error) {
+      console.error("Erreur de chargement:", error);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  async function toggleLicenseStatus(id, currentStatus) {
-    const nextStatus = currentStatus === 'valide' ? 'expire' : currentStatus === 'expire' ? 'en_attente' : 'valide';
-    await supabase.from('members').update({ license_status: nextStatus }).eq('id', id);
-    setMembers(prev => prev.map(m => m.id === id ? { ...m, license_status: nextStatus } : m));
-  }
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
 
-  async function updateClubTheme(field, value) {
-    setMyClub(prev => ({ ...prev, [field]: value }));
-    await supabase.from('clubs').update({ [field]: value }).eq('id', myClub.id);
-  }
+  // 3. Rendu dynamique des onglets avec logique de filtrage
+  const renderTabContent = () => {
+    if (!myClub) return null;
 
-  async function deleteMember(id) {
-    if (!window.confirm("Supprimer ce membre ?")) return;
-    await supabase.from('members').delete().eq('id', id);
-    setMembers(prev => prev.filter(m => m.id !== id));
-  }
+    const commonProps = { 
+      myClub, 
+      supabase, 
+      dynamicRadius: myClub.border_radius || '1.2rem',
+      updateClubTheme: async (field, value) => {
+        setMyClub(prev => ({ ...prev, [field]: value }));
+        await supabase.from('clubs').update({ [field]: value }).eq('id', myClub.id);
+      }
+    };
+    
+    switch (activeTab) {
+      case 'dashboard': 
+        return <DashboardTab 
+          members={members} 
+          {...commonProps}
+          setActiveTab={(tab) => {
+            setActiveTab(tab);
+            // Si on redirige vers membres depuis une alerte, on active le filtre
+            if (tab === 'membres') setMemberFilter('en_attente'); 
+            else setMemberFilter('tous');
+          }} 
+        />;
+      case 'membres':
+        return <MembersTab 
+          members={members} 
+          searchTerm={searchTerm} 
+          setSearchTerm={setSearchTerm}
+          initialFilter={memberFilter} // Passe le filtre automatique
+          newMember={newMember} 
+          setNewMember={setNewMember} 
+          fetchClubAndMembers={fetchClubAndMembers}
+          sortConfig={sortConfig}
+          requestSort={(key) => {
+            let direction = 'asc';
+            if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
+            setSortConfig({ key, direction });
+          }}
+          {...commonProps}
+          handleImageUpload={() => alert("Scanner IA activé")}
+        />;
+      case 'finance': return <FinanceTab {...commonProps} updateClubTheme={commonProps.updateClubTheme} />;
+      case 'calendrier': return <CalendarTab {...commonProps} />;
+      case 'documents': return <DocumentsTab members={members} refreshData={fetchClubAndMembers} {...commonProps} />;
+      case 'parametres': return <SettingsTab {...commonProps} />;
+      default: return null;
+    }
+  };
 
-  async function handleImageUpload(e) {
-    const file = e.target.files[0];
-    if (!file || !myClub) return;
-    setLoading(true);
-    try {
-      const imageData = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result.split(',')[1]);
-        reader.readAsDataURL(file);
-      });
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const prompt = `Extrais les membres du club d'échecs depuis cette image. 
-Pour chaque joueur, récupère : le NOM (en majuscules), le Prénom, l'ELO actuel, et le Numéro de licence si visible.
-Réponds uniquement en JSON sous cette forme : 
-[{"last_name": "NOM", "first_name": "Prenom", "elo": 1500, "license_number": "A12345"}]`;
-      const result = await model.generateContent([prompt, { inlineData: { data: imageData, mimeType: file.type } }]);
-      const rawData = JSON.parse(result.response.text().replace(/```json|```/g, "").trim());
-      const formatted = rawData.map(m => ({ 
-        ...m, 
-        last_name: m.last_name.toUpperCase(), 
-        club_id: myClub.id, 
-        elo: parseInt(m.elo) || 0, 
-        license_status: 'en_attente',
-        category: 'Adulte' 
-      }));
-      await supabase.from('members').upsert(formatted, { onConflict: 'first_name, last_name, club_id' });
-      fetchClubAndMembers();
-    } catch (error) { alert(error.message); }
-    setLoading(false);
-  }
-
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-slate-50 font-black text-indigo-600 animate-pulse italic uppercase tracking-widest text-sm">Chargement...</div>
-
-  if (!session) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
-      <div className="max-w-md w-full bg-white rounded-[3rem] shadow-2xl p-12 text-center border border-white">
-        <Trophy size={48} className="text-indigo-600 mx-auto mb-6" />
-        <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic uppercase mb-8">ChessManager</h1>
-        <Auth supabaseClient={supabase} appearance={{ theme: ThemeSupa }} providers={[]} />
+  if (loading) {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-slate-50 font-black text-indigo-600 animate-pulse italic uppercase tracking-widest text-sm">
+        INITIALISATION...
       </div>
-    </div>
-  )
+    );
+  }
 
-  if (!myClub) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4 text-center">
-      <div className="max-w-md w-full bg-white rounded-[2.5rem] p-10 shadow-xl">
-        <Star size={48} className="text-amber-500 mx-auto mb-4 animate-pulse" />
-        <h2 className="text-2xl font-black mb-4 uppercase tracking-tighter italic text-slate-900">Accès en attente</h2>
-        <button onClick={() => supabase.auth.signOut()} className="bg-slate-900 text-white px-8 py-3 rounded-xl font-bold uppercase text-xs tracking-widest">Déconnexion</button>
-      </div>
-    </div>
-  )
+  if (!session || isNotAdmin) {
+    return <Login supabase={supabase} isNotAdmin={isNotAdmin} handleLogout={handleLogout} />;
+  }
 
-  const dynamicRadius = myClub.border_radius || '1.2rem';
-  const dynamicFontFamily = myClub.custom_font ? `'${myClub.custom_font}', sans-serif` : 'inherit';
-  const defaultFontClass = myClub.font_family || 'font-sans';
+  const currentTabLabel = NAVIGATION_TABS.find(t => t.id === activeTab)?.label;
 
   return (
-    <div 
-      className={`min-h-screen bg-[#F8FAFC] flex antialiased text-slate-900 overflow-x-hidden italic uppercase ${myClub.custom_font ? '' : defaultFontClass}`}
-      style={{ fontFamily: dynamicFontFamily }}
-    >
+    <div className="min-h-screen bg-[#F8FAFC] flex antialiased text-slate-900 overflow-x-hidden italic uppercase font-sans">
       
-      {/* SIDEBAR NAVIGATION */}
-      <aside className="w-72 bg-slate-900 text-slate-400 hidden lg:flex flex-col shrink-0 border-r border-slate-800">
-        <div className="h-32 flex items-center px-8 border-b border-slate-800/50">
-          <div className="flex items-center gap-4 overflow-hidden">
-            {myClub.logo_url ? (
-              <img src={myClub.logo_url} className="w-12 h-12 object-contain bg-white/5 p-1 rounded-xl shrink-0" />
-            ) : (
-              <div className="p-2 bg-indigo-500/10 rounded-xl shrink-0"><Trophy size={24} style={{ color: myClub.primary_color || '#6366f1' }} /></div>
-            )}
-            <span className="text-white font-black text-xl tracking-tighter italic uppercase truncate">{myClub.name.split(' ')[0]}</span>
-          </div>
-        </div>
+      {/* SIDEBAR */}
+      {/* SIDEBAR */}
+<aside className="w-72 bg-slate-900 text-slate-400 hidden lg:flex flex-col shrink-0 border-r border-slate-800">
+  <div className="h-32 flex items-center px-6 border-b border-slate-800/50"> {/* Réduction légère du padding horizontal */}
+    <div className="flex items-center gap-4 w-full"> {/* Ajout de w-full */}
+      <div className="p-2 bg-indigo-500/10 rounded-xl shrink-0">
+         <Trophy size={24} style={{ color: myClub?.primary_color || '#6366f1' }} />
+      </div>
+      {/* Modification ici : suppression de truncate et ajout de leading-tight */}
+      <span className="text-white font-black text-lg tracking-tighter italic uppercase leading-tight break-words">
+        {myClub?.name || "ADMIN"}
+      </span>
+    </div>
+  </div>
+  
+  {/* ... reste de la Sidebar */}
         
-        <nav className="flex-1 px-4 mt-6 space-y-2 font-black">
-          <button onClick={() => setActiveTab('membres')} 
-            className={`flex items-center gap-3 px-5 py-4 rounded-2xl w-full transition-all border ${activeTab === 'membres' ? 'bg-slate-800 text-white border-slate-700 shadow-inner' : 'border-transparent hover:text-white hover:bg-slate-800/50'}`}>
-            <Users size={20} /> Membres
-          </button>
-          
-          <button onClick={() => setActiveTab('finance')} 
-            className={`flex items-center gap-3 px-5 py-4 rounded-2xl w-full transition-all border ${activeTab === 'finance' ? 'bg-slate-800 text-white border-slate-700 shadow-inner' : 'border-transparent hover:text-white hover:bg-slate-800/50'}`}>
-            <Euro size={20} /> Trésorerie
-          </button>
-
-          <button onClick={() => setActiveTab('calendrier')} 
-            className={`flex items-center gap-3 px-5 py-4 rounded-2xl w-full transition-all border ${activeTab === 'calendrier' ? 'bg-slate-800 text-white border-slate-700 shadow-inner' : 'border-transparent hover:text-white hover:bg-slate-800/50'}`}>
-            <CalendarIcon size={20} /> Calendrier
-          </button>
-
-          {/* NOUVEL ONGLET COFFRE-FORT */}
-          <button onClick={() => setActiveTab('documents')} 
-            className={`flex items-center gap-3 px-5 py-4 rounded-2xl w-full transition-all border ${activeTab === 'documents' ? 'bg-slate-800 text-white border-slate-700 shadow-inner' : 'border-transparent hover:text-white hover:bg-slate-800/50'}`}>
-            <ShieldCheck size={20} /> Coffre-fort
-          </button>
-
-          <button onClick={() => setActiveTab('parametres')} 
-            className={`flex items-center gap-3 px-5 py-4 rounded-2xl w-full transition-all border ${activeTab === 'parametres' ? 'bg-slate-800 text-white border-slate-700 shadow-inner' : 'border-transparent hover:text-white hover:bg-slate-800/50'}`}>
-            <Settings size={20} /> Paramètres
-          </button>
+        <nav className="flex-1 px-4 mt-6 space-y-2">
+          {NAVIGATION_TABS.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button 
+                key={tab.id} 
+                onClick={() => {
+                   setActiveTab(tab.id);
+                   setMemberFilter('tous'); // Réinitialise le filtre lors d'un clic manuel
+                }} 
+                className={`flex items-center gap-3 px-5 py-4 rounded-2xl w-full transition-all border font-black ${activeTab === tab.id ? 'bg-slate-800 text-white border-slate-700 shadow-inner' : 'border-transparent hover:text-white hover:bg-slate-800/50'}`}
+              >
+                <Icon size={20} /> {tab.label}
+              </button>
+            )
+          })}
         </nav>
 
         <div className="p-8 border-t border-slate-800/20">
-          <button onClick={() => supabase.auth.signOut()} className="flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-red-400 rounded-2xl w-full font-bold transition-all text-sm italic uppercase">
+          <button onClick={handleLogout} className="flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-red-400 rounded-2xl w-full font-bold transition-all text-sm italic uppercase tracking-widest">
             <LogOut size={18} /> Déconnexion
           </button>
         </div>
       </aside>
 
-      {/* MAIN CONTENT AREA */}
+      {/* ZONE DE CONTENU */}
       <main className="flex-1 overflow-auto h-screen px-6 lg:px-12 py-10">
-        <header className="flex justify-between items-center mb-12 italic uppercase">
-          <div className="max-w-full overflow-hidden">
-            <h2 className="text-3xl md:text-4xl font-black tracking-tighter italic uppercase truncate" style={{ color: myClub.primary_color || '#1e293b' }}>
-                {activeTab === 'membres' ? myClub.name : 
-                 activeTab === 'finance' ? "Trésorerie" : 
-                 activeTab === 'calendrier' ? "Calendrier" : 
-                 activeTab === 'documents' ? "Coffre-fort" : "Paramètres"}
-            </h2>
-          </div>
+  <header className="flex justify-between items-center mb-12">
+    {/* Ajout de pr-2 pour éviter que l'italique ne soit coupé */}
+    <h2 className="text-3xl md:text-4xl font-black tracking-tighter italic uppercase truncate pr-2" 
+        style={{ color: myClub?.primary_color || '#1e293b' }}>
+      {activeTab === 'dashboard' ? "Tableau de Bord" : (activeTab === 'membres' ? myClub?.name : currentTabLabel)}
+    </h2>
           {activeTab === 'membres' && (
-            <div className="relative group w-full md:w-auto">
+            <div className="relative w-full md:w-96">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input className="pl-12 pr-8 py-4 bg-white border border-slate-200 rounded-2xl text-sm outline-none w-full md:w-96 font-bold shadow-sm focus:ring-4 focus:ring-indigo-500/5 transition-all shadow-inner uppercase" placeholder="Rechercher..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              <input 
+                className="pl-12 pr-8 py-4 bg-white border border-slate-200 rounded-2xl text-[10px] w-full font-black shadow-sm outline-none focus:ring-4 focus:ring-indigo-500/5 transition-all uppercase" 
+                placeholder="RECHERCHER..." 
+                value={searchTerm} 
+                onChange={(e) => setSearchTerm(e.target.value)} 
+              />
             </div>
           )}
         </header>
 
-        {/* LOGIQUE D'AFFICHAGE DES ONGLETS */}
         <div className="pb-20">
-            {activeTab === 'membres' ? (
-              <MembersTab 
-                members={members} searchTerm={searchTerm} setSearchTerm={setSearchTerm}
-                newMember={newMember} setNewMember={setNewMember} handleImageUpload={handleImageUpload}
-                toggleLicenseStatus={toggleLicenseStatus} deleteMember={deleteMember}
-                requestSort={(key) => {
-                  let direction = 'asc';
-                  if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
-                  setSortConfig({ key, direction });
-                }}
-                sortConfig={sortConfig} myClub={myClub} supabase={supabase}
-                fetchClubAndMembers={fetchClubAndMembers}
-              />
-            ) : activeTab === 'finance' ? (
-              <FinanceTab myClub={myClub} supabase={supabase} dynamicRadius={dynamicRadius} updateClubTheme={updateClubTheme} />
-            ) : activeTab === 'calendrier' ? (
-              <CalendarTab myClub={myClub} supabase={supabase} dynamicRadius={dynamicRadius} />
-            ) : activeTab === 'documents' ? (
-              <DocumentsTab 
-    members={members} 
-    supabase={supabase} 
-    dynamicRadius={dynamicRadius} 
-    refreshData={fetchClubAndMembers} // <--- C'EST CETTE LIGNE QU'IL FAUT AJOUTER/VÉRIFIER
-  />
-            ) : (
-              <SettingsTab myClub={myClub} updateClubTheme={updateClubTheme} />
-            )}
+          {renderTabContent()}
         </div>
       </main>
     </div>
